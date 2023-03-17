@@ -1,0 +1,71 @@
+function [ratioMode,finalBufferLength,AppBuffer,BufferFinal] = picoCaptureStreamSettings(obj,nCh,msrtime,pretime,samplerate,downSamplingRatio,autoStop)
+% PICOCAPTURESTREAMSETTINGS Configures the parameters of the stream capture.
+%
+% Input:
+%                 obj - PicoScope Object (icdevice).
+%               nCh - 
+%             msrtime - Capture time in seconds.
+%             pretime - Capture time before trigger in seconds.
+%          samplerate - Sample rate in Hertz.
+%   downSamplingRatio - Downsampling ratio.
+%            autoStop - Boolean to set autostop wen msrtime is done or dont stop.
+%
+% Example
+% nCh = 1;
+% msrtime = 5; % Max capture time in seconds
+% pretime = 0; % Pretrigger capture time in seconds
+% downSamplingRatio = 1;
+% [ratioMode,finalBufferLength,AppBuffer,BufferFinal] = picoCaptureStreamSettings(obj,nCh,msrtime,pretime,samplerate,downSamplingRatio);
+%
+% Copyright: © 2023 <a href="https://bio.jmrp.io">Jose Manuel Requena Plens</a>
+%
+% <a href="matlab:help('picoscope5000')">Go to main help.</a>
+%
+% See also PICORUNSTREAM, PICOGETDOWNSAMPLINGRATIOMODE.
+arguments
+    obj                 icdevice
+    nCh                 (1,1) {mustBePositive,mustBeInteger} = 1
+    msrtime             (1,1) {mustBePositive} = 10e-3
+    pretime             (1,1) {mustBeNonnegative} = 0
+    samplerate          (1,1) {mustBePositive,mustBeInteger} = 20e6
+    downSamplingRatio   (1,1) {mustBeInteger,mustBePositive} = 1
+    autoStop            (1,1) {mustBeMember(autoStop,[0,1])} = 1
+end
+
+% Calculate Trigger buffers
+sampleInterval = 1/samplerate;
+ratioMode = picoGetDownSamplingRatioMode(downSamplingRatio);
+minbuffer = ceil(msrtime / sampleInterval)+1;
+prebuffer = ceil(pretime / sampleInterval);
+
+% Set Trigger buffers
+set(obj, 'numPreTriggerSamples', prebuffer);
+set(obj, 'numPostTriggerSamples', minbuffer);
+
+% Total samples
+maxSamples = minbuffer + prebuffer;
+
+% Take into account the downsampling ratio mode. Allocate sufficient space
+% (1.5 times the sum of the number of pre-trigger and post-trigger samples).
+finalBufferLength = round(maxSamples / downSamplingRatio * 1.5);
+
+% Create buffers
+streamObj = picoGetChildObject(obj,'Streaming');
+DriverBuffer(nCh) = libpointer;
+AppBuffer   (nCh) = libpointer;
+BufferFinal(nCh) = libpointer;
+for i=1:nCh
+
+    DriverBuffer(i) = libpointer('int16Ptr', zeros(finalBufferLength, 1, 'int16'));
+    AppBuffer(i) = libpointer('int16Ptr', zeros(finalBufferLength, 1, 'int16'));
+
+    invoke(obj, 'ps5000aSetDataBuffer', ...
+        ch_properties.channels(i), DriverBuffer(i), finalBufferLength, 0, ratioMode);
+
+    invoke(streamObj, 'setAppAndDriverBuffers', ch_properties.channels(i), ...
+        AppBuffer(i), DriverBuffer(i), finalBufferLength);
+
+    BufferFinal(i) = libpointer('int16Ptr', zeros(finalBufferLength, 1, 'int16'));
+end
+
+set(streamObj, 'autoStop', autoStop);
